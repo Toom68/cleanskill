@@ -542,6 +542,13 @@ function cmdTrim() {
 
   if (dryRun) return emit({ dryRun: true, target: s.handle || s.mailbox, agent: s.agent, archive, memBefore, wouldSend: COMPACT_CMD[s.agent] || '(checkpoint prompt)' });
 
+  // never run a destructive /compact with no transcript on disk — the archive
+  // is the whole point of trim. Checkpoint prompts (unknown agents, mailbox
+  // sessions) don't destroy context, so they may proceed without one.
+  if ((archive.skipped || archive.error) && s.handle && COMPACT_CMD[s.agent] && !FLAG('--force')) {
+    fail(`archive did not complete (${archive.skipped || archive.error}) — refusing to ${COMPACT_CMD[s.agent]} with nothing on disk. Fix the archive path or pass --force.`);
+  }
+
   // 2) send the agent's native compaction command; unknown agents get a
   //    checkpoint-summary instruction they can act on autonomously
   let sent = null;

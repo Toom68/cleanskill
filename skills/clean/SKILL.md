@@ -46,7 +46,7 @@ node scripts/clean.mjs warn <target>           # send the warning only
 node scripts/clean.mjs close <target>          # warn → grace → close
       [--grace <sec>] [--message <m>] [--no-warn] [--tab] [--dry-run]
 node scripts/clean.mjs trim <target>           # archive context + send /compact
-      [--archive <dir>] [--then-close] [--dry-run]
+      [--archive <dir>] [--then-close] [--force] [--dry-run]
 node scripts/clean.mjs self                    # your own session identity
 ```
 
@@ -110,6 +110,12 @@ For a session that should keep working but has grown heavy:
 3. It re-measures after ~15s and reports memory before/after. A full /compact
    can take minutes; re-run `list` later for the true delta. `--then-close`
    appends the close hint for after the compaction lands.
+
+If archiving fails or is skipped for a session whose native compact command
+would run, `trim` refuses — compacting with nothing on disk defeats the
+purpose. Pass `--force` to compact anyway, or point `--archive` somewhere
+writable. Checkpoint prompts sent to unknown agents and mailbox sessions are
+non-destructive and still go through.
 
 The archive is the point: the trimmed transcript stays on disk where any
 agent can grep it later — quality preserved, RAM reclaimed.
