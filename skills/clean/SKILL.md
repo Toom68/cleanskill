@@ -43,8 +43,9 @@ server-scoped).
 node scripts/clean.mjs list [--all] [--json]   # sessions + memory; own repo first
 node scripts/clean.mjs peek <handle>           # what the terminal currently shows
 node scripts/clean.mjs warn <target>           # send the warning only
-node scripts/clean.mjs close <target>          # warn → grace → close
+node scripts/clean.mjs close <target>          # warn → grace → park/close
       [--grace <sec>] [--message <m>] [--no-warn] [--tab] [--dry-run]
+      [--hard] [--session <id>]                # kill the terminal / resume id to pre-type
 node scripts/clean.mjs trim <target>           # archive context + send /compact
       [--archive <dir>] [--then-close] [--force] [--dry-run]
 node scripts/clean.mjs self                    # your own session identity
@@ -81,8 +82,18 @@ selector (`id:`, `identity:`, `name:`, `path:`) to address a whole workspace.
    `clean.mjs peek <handle>` again before closing; give it the time it asks
    for (within reason). A `READY`/silence outcome means proceed.
 
-5. **Close.** After grace, the same command finishes: PTYs via
-   `terminal close` (`--tab` for the whole tab), dispatches via
+5. **Close.** After grace, the same command finishes. **Resumable agents
+   (devin) are parked by default**: the agent gets `/exit`, its process (and
+   its RAM) goes away, but the terminal stays as a ~100MB shell with
+   `devin <original flags> --resume <id>` already typed at the prompt — the
+   user presses Enter to get the conversation back. The id comes from the
+   agent's exit screen, then its process command line, then (last resort)
+   the newest `sessions.db` session for that directory. Park only carries
+   `--permission-mode`, `--respect-workspace-trust` and `--model` over, so a
+   one-shot launch prompt is never re-sent. If the agent is sitting on a
+   trust/permission prompt, Orca blocks the `/exit` and park reports an error
+   instead of guessing. `--hard` skips parking and kills the terminal.
+   Everything else: PTYs via `terminal close` (`--tab` for the whole tab), dispatches via
    `worker-stop`, a whole workspace via `terminal close --worktree <sel>
    --all` (durable — removes tabs, layouts and resume records). Chat sessions
    have no PTY handle: the warning is delivered to their mailbox and the only

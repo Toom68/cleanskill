@@ -8,7 +8,7 @@ Any platform that can honor these semantics can host the same skill.
 | list  | —                      | every live session: address, agent type, state, memory (working set + private bytes), idle time, liveness hint, own-project flag |
 | peek  | pty handle             | the session's current visible screen, as text |
 | warn  | pty handle or mailbox  | deliver "about to be closed" text the agent can see; report accepted/not |
-| close | handle / mailbox / workspace | graceful end: PTY kill, worker stop, or workspace bulk close — after warn+grace unless `--no-warn` |
+| close | handle / mailbox / workspace | graceful end — after warn+grace unless `--no-warn`. Resumable agents are *parked* (agent exits, shell stays with its resume command pre-typed); otherwise PTY kill, worker stop, or workspace bulk close |
 | trim  | handle or mailbox      | archive full context to disk, then ask the agent to compact |
 
 Address types:
@@ -31,6 +31,8 @@ peek    orca terminal read --terminal <h> --screen --json
         #   → result.terminal.tail = visible lines
 warn    orca terminal send --terminal <h> --text "…" --enter [--wait-submit 10]
         orca orchestration send --to <mailbox> --subject "…" --type question
+park    orca terminal send --terminal <h> --text /exit --enter     # agent exits, shell stays
+        orca terminal send --terminal <h> --text "devin --resume <id>"   # no --enter: pre-typed
 close   orca terminal close --terminal <h> [--tab]
         orca terminal close --worktree <sel> --all     # durable, whole workspace
         orca orchestration worker-stop --dispatch <id>      # live/unverifiable worker
@@ -76,7 +78,7 @@ chat sessions; check `peek` equivalents by opening the chat tab if it matters.
 
 | agent   | compact cmd | session persistence | close notes |
 |---------|-------------|--------------------|-------------|
-| devin   | `/compact`  | sqlite `sessions.db` + `summaries/history_*.md`; resume via `devin --resume <id>` | full transcript archivable offline |
+| devin   | `/compact`  | sqlite `sessions.db` + `summaries/history_*.md`; resume via `devin --resume <id>` | parked by default (`/exit` prints `devin.exe -r <id>`); full transcript archivable offline |
 | claude  | `/compact`  | `~/.claude/projects/<dir>/…jsonl`; `--resume` | scrollback archive |
 | codex   | `/compact`  | `~/.codex/sessions`; `codex resume` | untested here (quota) — same path in theory |
 | copilot | `/compact`  | varies | same path in theory |

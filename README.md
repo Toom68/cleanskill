@@ -16,7 +16,7 @@ Each Devin CLI session starts around **2.8 GB** and only grows. Run a handful of
 | `list` | Every live Orca session — terminals, chat agents, workers — with per-session RAM, own project first |
 | `peek` | Show what a session's terminal is currently displaying |
 | `warn` | Send "you're about to be closed" — reads and reports the reply |
-| `close` | Warn → wait a grace period → close. Refuses to close *you* |
+| `close` | Warn → wait a grace period → close. Devin sessions get **parked**: the agent exits (RAM freed), the terminal stays with `devin --resume <id>` pre-typed, so Enter brings it back. Refuses to close *you* |
 | `trim` | Archive the transcript to `.clean-archive/`, then send `/compact` |
 
 ```console

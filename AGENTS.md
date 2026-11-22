@@ -31,8 +31,16 @@ Commit on the worktree's `Toom68/*` branch; remote is
 
 `list`, `peek`, `warn`, `close --dry-run`, `trim --dry-run` are all safe.
 `trim --dry-run` still writes the archive file (to `.clean-archive/`,
-gitignored) — that IS the feature. Real `close`/`trim` on a live session has
-not been run yet — needs a sacrificial session.
+gitignored) — that IS the feature. Real `trim`, `close --hard` and park have
+all been run live. To test park, use a throwaway — never a real session:
+
+```bash
+H=$(orca terminal create --worktree active --title park-test --json | python -c "import json,sys;print(json.load(sys.stdin)['result']['terminal']['handle'])")
+orca terminal send --terminal $H --text devin --enter   # then one tiny prompt so it saves
+node skills/clean/scripts/clean.mjs close $H --no-warn  # park → expect resume pre-typed
+orca terminal send --terminal $H --enter                # resumes the conversation
+node skills/clean/scripts/clean.mjs close $H --no-warn --hard && devin rm <id> --force
+```
 
 ## Orca + devin facts that bite (learned the hard way)
 
@@ -58,6 +66,21 @@ not been run yet — needs a sacrificial session.
   resumable via `devin --resume <id>`). Native cmds: `/compact`, `/clear`,
   `/handoff`, `/summarize`. `devin --cloud` offloads the agent backend to
   Devin Cloud. `devin skills paths` shows skill dirs.
+- **devin exit/resume:** `/exit` prints `devin.exe -r <id>` and then
+  `… devin.exe -r lists recent sessions`, so anchor the regex to the whole line.
+  The TUI process's command line (child of the PTY-root pid) holds
+  `--resume <id>` plus Orca's launch flags (`--permission-mode bypass
+  --respect-workspace-trust false`). A bare `devin --resume` without those
+  flags stops at the workspace-trust prompt. Several sessions can share one
+  working dir, and the newest one in `sessions.db` may well be *you*, so
+  only fall back to it last.
+- **Prompts block input:** while an agent shows a trust/permission prompt,
+  `terminal send --text … --enter` fails with `agent_prompt_blocked`. To answer
+  it, send `--text` and `--enter` as separate calls. Bare-shell PowerShell
+  clears the line with `--text $'\x1b'`.
+- **Agent tagging lags:** Orca's `agentIdentity` can still say shell for a few
+  seconds after devin is started by hand. `sniffAgent` checks the screen for
+  the devin TUI as a fallback.
 - **Machine:** Windows, Git Bash, ~16GB RAM often tight — prefer `--json`,
   small commands, and don't fork-bomb. For PowerShell commands use a
   PowerShell shell (Git Bash mangles `$_`). `sqlite3` CLI absent — use

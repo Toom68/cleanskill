@@ -265,12 +265,25 @@ function findSession(ref) {
         s.handle === ref || s.ptyId === ref || s.sessionId === ref ||
         s.mailbox === ref || s.paneKey === ref || s.dispatchId === ref ||
         (s.ptyId && s.ptyId.endsWith(ref)) || (s.paneKey && s.paneKey.endsWith(ref))
-      ) return { workspace: w, session: s };
+      ) return { workspace: w, session: sniffAgent(s) };
     }
     // allow addressing a workspace itself (closes all its terminals)
-    if (w.worktreeId === ref || w.path === ref || w.address === ref) return { workspace: w, session: null };
+    if (w.worktreeId === ref || w.path === ref || w.address === ref) { w.sessions.forEach(sniffAgent); return { workspace: w, session: null }; }
   }
   return null;
+}
+
+// Orca can lag in tagging an agent started by hand in a plain shell (e.g. a
+// parked session the user resumed) — recognise known agent TUIs on screen
+const AGENT_SCREEN = { devin: /Ask Devin to build/ };
+function sniffAgent(s) {
+  if (s.kind !== 'pty' || s.agent !== 'shell' || !s.handle) return s;
+  const tail = screenTail(s.handle, 30) || '';
+  const last = tail.split('\n').map((l) => l.trimEnd()).filter(Boolean).pop() || '';
+  if (SHELL_PROMPT.test(last)) return s;
+  const hit = Object.entries(AGENT_SCREEN).find(([, re]) => re.test(tail));
+  if (hit) { s.agent = hit[0]; s.agentFrom = 'screen'; }
+  return s;
 }
 
 function refreshHandle(s, workspaceAddress) {
@@ -342,8 +355,81 @@ function cmdWarn() {
   emit({ sent: results });
 }
 
+// agents that can exit and later reload the same conversation from disk:
+// park = exit the agent, keep the (cheap) shell, pre-type its resume command
+const PARK = {
+  // on exit devin prints "devin.exe -r <id>" alone on a line, then
+  // "… devin.exe -r lists recent sessions" — anchor so "lists" never matches
+  devin: {
+    exit: '/exit',
+    proc: 'devin',
+    resume: (id, flags) => ['devin', flags, '--resume', id].filter(Boolean).join(' '),
+    hint: /^\s*devin(?:\.exe)?\s+(?:-r|--resume)\s+([\w-]+)\s*$/gm,
+  },
+};
+
+// the agent's own command line, read before it exits: carries its resume id
+// (when it was resumed) and the launch flags Orca used (permission mode,
+// workspace trust) so the pre-typed resume reproduces the same launch
+function agentLaunch(rootPid, name) {
+  if (!rootPid) return null;
+  let rows = [];
+  if (process.platform === 'win32') {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      `Get-CimInstance Win32_Process | Where-Object Name -eq '${name}.exe' | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress`], { encoding: 'utf8' });
+    try { rows = [].concat(JSON.parse(r.stdout || '[]')).map((p) => ({ ppid: p.ParentProcessId, args: p.CommandLine || '' })); } catch {}
+  } else {
+    const r = spawnSync('ps', ['-eo', 'pid=,ppid=,args='], { encoding: 'utf8' });
+    rows = (r.stdout || '').split('\n').map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/)).filter(Boolean).map((m) => ({ ppid: +m[2], args: m[3] }));
+  }
+  const p = rows.find((x) => x.ppid === rootPid && x.args.includes(name));
+  if (!p) return null;
+  const argv = (p.args.match(/"[^"]*"|\S+/g) || []).slice(1);
+  let id = null; const flags = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--resume' || argv[i] === '-r') id = argv[++i] || null;
+    else if (KEEP_FLAGS.has(argv[i]) && argv[i + 1]) flags.push(argv[i], argv[++i]);
+  }
+  return { id, flags: flags.join(' ') };
+}
+// launch flags safe to replay on resume — anything else (e.g. a one-shot
+// initial prompt) is dropped so resuming never re-sends work
+const KEEP_FLAGS = new Set(['--permission-mode', '--respect-workspace-trust', '--model']);
+const SHELL_PROMPT = /(^PS [^>]*>|[$#%>])\s*$/;
+
+function resumeGuess(s, w) {
+  if (s.agent !== 'devin') return null;
+  const p = devinSessions(w.path);
+  if (p.skipped) return null;
+  const want = OPT('--session', null);
+  return want && p.sessions.some((x) => x.id === want) ? want : p.sessions[0].id;
+}
+
+function parkOne(s, w) {
+  const spec = PARK[s.agent];
+  const launch = agentLaunch(s.pid, spec.proc);
+  orca(['terminal', 'send', '--terminal', s.handle, '--text', spec.exit, '--enter']);
+  // wait for the agent to hand the PTY back to its shell
+  let tail = '', back = false;
+  for (const deadline = Date.now() + 30000; Date.now() < deadline;) {
+    sleep(2000);
+    tail = screenTail(s.handle, 30) || '';
+    const last = tail.split('\n').map((l) => l.trimEnd()).filter(Boolean).pop() || '';
+    if (SHELL_PROMPT.test(last)) { back = true; break; }
+  }
+  if (!back) return { target: s.handle, via: 'park', error: `${s.agent} did not exit within 30s — still running; peek it, or close --hard` };
+  // the agent's own exit hint beats the db guess (several sessions can share a dir)
+  const hinted = [...tail.matchAll(spec.hint)].pop()?.[1];
+  const id = hinted || launch?.id || resumeGuess(s, w);
+  if (!id) return { target: s.handle, via: 'park', parked: true, resume: null, note: 'agent exited, shell kept; resume id unknown' };
+  const resume = spec.resume(id, launch?.flags);
+  orca(['terminal', 'send', '--terminal', s.handle, '--text', resume]); // no --enter: one keypress to resume
+  return { target: s.handle, via: 'park', parked: true, resume, idFrom: hinted ? 'exit screen' : launch?.id ? 'process command line' : 'sessions.db (newest in dir — verify)' };
+}
+
 function closeOne(s, w, opts) {
   if (s.self) return { target: s.handle || s.mailbox, skipped: 'self' };
+  if (s.handle && PARK[s.agent] && !opts.hard) return parkOne(s, w);
   if (s.dispatchId) {
     // settled workers get release (frees the retained terminal only);
     // live/unverifiable ones get stop (fences the dispatch + helpers)
@@ -378,12 +464,13 @@ function cmdClose() {
   const grace = parseFloat(OPT('--grace', '60'));
   const noWarn = FLAG('--no-warn');
   const dryRun = FLAG('--dry-run');
-  const opts = { tab: FLAG('--tab') };
+  const opts = { tab: FLAG('--tab'), hard: FLAG('--hard') };
   const found = findSession(ref) || fail(`no session matches "${ref}"`);
   const targets = found.session ? [found.session] : found.workspace.sessions.filter((s) => !s.self && (s.handle || s.mailbox || s.dispatchId));
   if (!targets.length) fail('nothing to close there (or it is your own session)');
+  const parks = (s) => !!(s.handle && PARK[s.agent] && !opts.hard);
 
-  const plan = targets.map((s) => ({ target: s.handle || s.mailbox || s.dispatchId, kind: s.kind, agent: s.agent, memory: s.memory, state: s.state }));
+  const plan = targets.map((s) => ({ target: s.handle || s.mailbox || s.dispatchId, kind: s.kind, agent: s.agent, memory: s.memory, state: s.state, mode: parks(s) ? 'park' : 'close' }));
   if (dryRun) return emit({ dryRun: true, wouldClose: plan, graceSeconds: noWarn ? 0 : grace });
 
   const out = { warned: [], replies: [], closed: [] };
@@ -410,7 +497,7 @@ function cmdClose() {
     }
   }
 
-  if (!found.session && found.workspace.liveTerminals > 0) {
+  if (!found.session && found.workspace.liveTerminals > 0 && !targets.some(parks)) {
     if (found.workspace.sessions.some((t) => t.self)) {
       emit({ error: 'target workspace contains your own session — refusing bulk close; close the other terminals individually', workspace: found.workspace.worktreeId });
       process.exit(3);
@@ -445,9 +532,9 @@ const COMPACT_CMD = {
   grok: '/compact',
 };
 
-function archiveDevin(worktreePath, outDir) {
-  // Devin CLI keeps the full message forest in a SQLite db — exporting it is
-  // read-only and safe even while the session is live (WAL mode).
+function devinSessions(worktreePath) {
+  // Devin CLI keeps the full message forest in a SQLite db — reading it is
+  // safe even while the session is live (WAL mode).
   const db = process.env.CHISEL_SESSION_DB ||
     path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'devin', 'cli', 'sessions.db');
   if (!fs.existsSync(db)) return { skipped: `no devin sessions.db at ${db}` };
@@ -470,6 +557,13 @@ print(json.dumps(out))`;
   const sessions = JSON.parse(r.stdout.trim() || '[]');
   if (!sessions.length) return { skipped: `no devin session for ${worktreePath}` };
   sessions.sort((a, b) => (b.last || 0) - (a.last || 0));
+  return { db, py, sessions };
+}
+
+function archiveDevin(worktreePath, outDir) {
+  const p = devinSessions(worktreePath);
+  if (p.skipped) return p;
+  const { db, py, sessions } = p;
   const want = OPT('--session', null);
   const sess = want ? sessions.find((s) => s.id === want) || { error: `no session "${want}" in ${worktreePath}; candidates: ${sessions.map((x) => x.id).join(', ')}` } : sessions[0];
   if (sess.error) return { skipped: sess.error };
@@ -617,6 +711,9 @@ const HELP = `clean — Orca session memory manager
   peek <handle>                    print the terminal's current screen
   warn <target> [--message m]      send the about-to-close warning only
   close <target> [--grace s]       warn → wait (polls replies) → close
+                                   resumable agents (devin) are parked: agent exits,
+                                   shell stays with its resume command pre-typed
+        [--hard] [--session id]    kill the terminal instead / resume id to pre-type
         [--no-warn] [--tab]        skip warning / close the whole tab
         [--dry-run]                show what would close
   trim <target> [--archive dir]    archive context to disk + send /compact
