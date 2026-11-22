@@ -33,7 +33,8 @@ warn    orca terminal send --terminal <h> --text "…" --enter [--wait-submit 10
         orca orchestration send --to <mailbox> --subject "…" --type question
 close   orca terminal close --terminal <h> [--tab]
         orca terminal close --worktree <sel> --all     # durable, whole workspace
-        orca orchestration worker-stop --dispatch-id <id>
+        orca orchestration worker-stop --dispatch <id>      # live/unverifiable worker
+        orca orchestration worker-release --dispatch <id>   # settled worker — frees the retained tab
         orca worktree rm --worktree <sel> [--force]    # only when user asked
 trim    archive: sessions.db dump (devin) | scrollback page-read (others)
         compact: terminal send "<native /compact>" --enter

@@ -345,8 +345,11 @@ function cmdWarn() {
 function closeOne(s, w, opts) {
   if (s.self) return { target: s.handle || s.mailbox, skipped: 'self' };
   if (s.dispatchId) {
-    // supervised worker: fence it and stop its terminal + helpers
-    return { target: s.dispatchId, result: orca(['orchestration', 'worker-stop', '--dispatch-id', s.dispatchId], 60000) };
+    // settled workers get release (frees the retained terminal only);
+    // live/unverifiable ones get stop (fences the dispatch + helpers)
+    const settled = /succeeded|failed|done|abandoned|completed|exited/i.test(s.state || '') || s.liveness === 'exited';
+    const verb = settled ? 'worker-release' : 'worker-stop';
+    return { target: s.dispatchId, via: verb, result: orca(['orchestration', verb, '--dispatch', s.dispatchId], 60000) };
   }
   if (s.handle) {
     const a = ['terminal', 'close', '--terminal', s.handle];
