@@ -109,7 +109,11 @@ For a session that should keep working but has grown heavy:
    decisions, open work, key paths) so the essentials survive in-context.
 3. It re-measures after ~15s and reports memory before/after. A full /compact
    can take minutes; re-run `list` later for the true delta. `--then-close`
-   appends the close hint for after the compaction lands.
+   appends the close hint for after the compaction lands. Expect `memAfter` to
+   be flat even when compaction succeeds — measured runs show the process heap
+   is not returned eagerly; `trim`'s payoff is the archive plus slower
+   re-growth. To actually reclaim RAM, `close` the session (`--resume` brings
+   it back from `sessions.db`).
 
 If archiving fails or is skipped for a session whose native compact command
 would run, `trim` refuses — compacting with nothing on disk defeats the

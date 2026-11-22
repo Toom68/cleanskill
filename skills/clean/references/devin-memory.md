@@ -29,13 +29,15 @@ Why it grows:
 | lever | effect | cost |
 |-------|--------|------|
 | `devin cloud` / `devin --cloud` | **best lever** — REPL stays local but `acp` relays to Devin Cloud: the context/exec/memory move off-box; local cost ≈ a thin client. Works inside an Orca terminal today; `devin ssh`/`forward` reach the cloud box | uses Devin Cloud compute/ACUs |
-| `/compact` (in-session) | shrinks live context → the acp process sheds the summarized tail | quality hit on edge cases; archive first (`trim` does this) |
+| `/compact` (in-session) | shrinks live context → slows further growth; RSS does **not** drop right away (measured: 152k→compacted, WS 1.72→1.73 GB, private 2.82→2.89 GB — heaps aren't returned eagerly) | quality hit on edge cases; archive first (`trim` does this) |
 | close + `devin --resume <id>` | kills the process; session reloads from `sessions.db` on resume — full history survives, RAM returns to baseline | cold restart; resume re-loads context so long sessions re-inflate |
 | `devin rm <id>` | deletes a session row entirely | only for sessions you never want back |
 | fewer parallel sessions | linear | obvious |
 
 Not real levers: the 2 GB `sessions.db` is **disk**, not RAM — shrinking it
-doesn't lower memory. Windows "Working Set" can also under-report; Orca's
+doesn't lower memory. `/compact` also won't hand RAM back on its own: the
+win is the archive plus slower re-growth — to actually reclaim, close the
+process (`close` + `--resume`). Windows "Working Set" can also under-report; Orca's
 diagnostics reports both `memory` (working set) and `privateMemory` (commit) —
 trust privateMemory for the "real" number.
 

@@ -1,8 +1,13 @@
 # cleanskill
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![node ≥ 18](https://img.shields.io/badge/node-%E2%89%A5%2018-blue)](https://nodejs.org)
+![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
+![runs inside Orca](https://img.shields.io/badge/runs%20inside-Orca-black)
+
 **Agent skills for Orca memory hygiene — see which sessions are eating your RAM, warn them, then close or trim them.**
 
-Each Devin CLI session starts around **2.8 GB** and only grows. Run a handful of agents and the box is out of memory. `clean` gives any agent running inside Orca the tools to fix that itself — list every live session with its real memory footprint, warn it politely, give it time to save its work, then close it. Long chats get `trim`: archive the full transcript to disk, then send the agent's native `/compact` so RAM drops without losing context.
+Each Devin CLI session starts around **2.8 GB** and only grows. Run a handful of agents and the box is out of memory. `clean` gives any agent running inside Orca the tools to fix that itself — list every live session with its real memory footprint, warn it politely, give it time to save its work, then close it. Long chats get `trim`: archive the full transcript to disk, then send the agent's native `/compact` so context shrinks without losing the transcript.
 
 ## What it does
 
@@ -60,8 +65,8 @@ Node 18+, zero dependencies. The skill is just a `SKILL.md` + one `clean.mjs` sc
 
 Measured findings live in [`skills/clean/references/devin-memory.md`](skills/clean/references/devin-memory.md). Short version: each session is a `devin.exe` TUI + a `devin.exe acp` child holding the full conversation in memory, plus every MCP server and subprocess in its tree. The fixes that actually work:
 
-1. **`trim`** — archive + `/compact` (native to the Devin binary)
-2. **close + `devin --resume`** — the 2 GB `sessions.db` already persists everything to disk
+1. **close + `devin --resume`** — the only lever that hands RAM back immediately; the 2 GB `sessions.db` persists everything to disk
+2. **`trim`** — archive + `/compact`: shrinks context and slows re-growth, but the process heap isn't returned eagerly (measured: flat RSS right after a 152k→compacted run)
 3. **`devin --cloud`** — relays ACP to Devin Cloud; the context and its memory leave your box entirely
 
 ## Repo layout
